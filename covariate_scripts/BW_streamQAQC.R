@@ -5,8 +5,22 @@ library(dplyr)
 library(tidyverse)
 library(plotly)
 
+
 ##==========================
-## Read in DO data from GBL
+## create date sequence: 
+## create an empty vector of times 
+# Define the start and end dates
+start_datetime <- as.POSIXct("2020-04-28 00:00:00", tz = "America/Los_Angeles")
+end_datetime <- as.POSIXct("2024-08-17 00:00:00", tz = "America/Los_Angeles")
+
+# Create a sequence of datetime values in 15-minute intervals
+datetime_seq <- seq(from = start_datetime, to = end_datetime, by = "5 mins")
+
+# Convert to a dataframe
+datetime_df <- data.frame(datetime = datetime_seq)
+
+##==========================
+## Read in DO data from BWL
 ##===========================
 ## BWL
 BWL_DO <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_BWL_DO_flag_record.rds")
@@ -73,7 +87,7 @@ HRflow_BW <- HRflow_data_BW %>%
 HRflow_data_plot <- HRflow_BW %>%
   mutate(date = as.Date(datetime),
          week = week(datetime)) %>%
-  filter(date > as.Date("2021-07-24") & date < as.Date("2021-10-01"))
+  filter(date > as.Date("2021-08-13") & date < as.Date("2021-08-27"))
 
 # Create a dataframe with noon times
 noon_lines <- HRflow_data_plot %>%
@@ -85,7 +99,7 @@ noon_lines <- HRflow_data_plot %>%
 HRflow_data_plot %>%
   ggplot(aes(y = wtr_USGS, x = datetime)) +
   geom_line(aes(y = wtr_USGS, x = datetime), col = "red") + 
-  geom_line(aes(y = (discharge_USGS_cfs*10), x = datetime), col = "#46b8b8",alpha = .7, size = 0.75) +
+  geom_line(aes(y = (dischargeCFS*10), x = datetime), col = "#46b8b8",alpha = .7, size = 0.75) +
   geom_vline(data = noon_lines, aes(xintercept = as.numeric(noon_time)), 
              linetype = "dashed", color = "grey50") +
   theme_bw() +
@@ -140,15 +154,23 @@ plot(HRflow_na$z, HRflow_na$depth)
 HRflow_BW$depth <- c(HRflow_BW$stage_m * c(0.49898/2.5))
 
 
-
 HRflow_BW1 <- HRflow_BW %>%
-  dplyr::select(datetime, dischargeCFS, stageF, dischargeCMS, scale_Q, stage_m,
-                depth,
-                #Site, 
-                Discharge, Temp, z, w, v)
+  mutate(date=as.Date(datetime))%>%
+  left_join(morph_dat, by = c("datetime")) %>%
+  dplyr::select(datetime, dischargeCFS, stageF, wtr_USGS, dischargeCMS, stage_m,
+                depth, Temp, z, w, v)
 
 ### merge DO and flow data
-BWL_DO1 <- BWL_DO%>%
+BWL_dat <- datetime_df %>%
+  left_join(BWL_DO, by = c("datetime")) %>%
+  left_join(HRflow_BW1, by = c("datetime"))
+
+  
+### YOU ARE HERE ####
+
+
+
+BWL_DO1 <- BWL_DO %>%
   left_join(HRflow_BW1, by = c("datetime"))
 str(BWL_DO1)
 range((BWL_DO1$date))
