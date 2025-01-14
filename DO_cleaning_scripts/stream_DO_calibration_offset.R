@@ -1,5 +1,6 @@
 ##===============================================================================
 ## Created  10/31/2024 by KAL
+## modified 01/12/25
 ##===============================================================================
 
 ## KAL's temporary path reminders: 
@@ -53,7 +54,6 @@ DO_offset <- rawdatDO_offset %>%
 
 hist(DO_offset$Dissolved_Oxygen_offset)
 
-# saveRDS(DO_offset, file = "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/24_offset_DO_record.rds")
 
 ##===========================
 ## 2. Add in cleaning date obs
@@ -67,15 +67,14 @@ DO_offset <- DO_offset%>%
   left_join(clean_dat, by = c("site","datetime"))
 str(DO_offset)
 
-# saveRDS(DO_offset1, file = "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/24_offset_DO_record.rds")
+# saveRDS(DO_offset, file = "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_offset_DO_record.rds")
 
 
 ##===========================
-# 2. Create the plot using plot_ly
-
+# 2. Create the plot using plot_lyyyy
 
 ## BWL
-NS_plot_BWL <- plot_ly(data = DO_offset_out%>%filter(site=="BWL"), x = ~datetime, y = ~Dissolved_Oxygen_offset, type = 'scatter',  mode = 'markers',  color = ~Sensor) %>%
+NS_plot_BWL <- plot_ly(data = DO_offset%>%filter(site=="BWL"), x = ~datetime, y = ~Dissolved_Oxygen_offset, type = 'scatter',  mode = 'markers',  color = ~Sensor) %>%
   layout(xaxis = list(title = "Date and Time"),
          yaxis = list(title = "DO (mgL)"))
 
@@ -324,42 +323,35 @@ identify_outliers_any <- function(x) {
 }
 
 # Apply the outlier detection within each day
-DO_flag_BWU <- DO_offset_BWU %>%
+DO_flag_GBU <- DO_offset_GBU %>%
   #filter(datetime > as.POSIXct("2022-05-01 00:00:00") & datetime < as.POSIXct("2022-06-01 00:00:00")) %>%
   arrange(datetime) %>%
   #group_by(day = as.Date(datetime)) %>%
   mutate(
-    DO_outlier = rollapply(Dissolved_Oxygen_offset, width = 36, 
+    DO_outlier = rollapply(Dissolved_Oxygen_offset, width = 10, 
                            FUN = identify_outliers_any, fill = NA, align = "right"),
-    wtr_outlier = rollapply(wtr, width = 24, 
+    wtr_outlier = rollapply(wtr, width = 10, 
                             FUN = identify_outliers_any, fill = NA, align = "right")
   ) %>%
   ungroup()
 
 # Convert logical outlier columns to character labels if desired
-DO_flag_BWU <- DO_flag_BWU %>%
+DO_flag_GBU <- DO_flag_GBU %>%
   mutate(
     DO_outlier = ifelse(DO_outlier, 1, 0),
     wtr_outlier = ifelse(wtr_outlier, 1, 0)
   )
 
 # Quick visualization
-DO_plot <- DO_flag_BWU %>%
+DO_plot <- DO_flag_GBU %>%
   ggplot(aes(x = datetime, y = Dissolved_Oxygen_offset, colour = as.factor(DO_outlier))) +
   geom_point(size=1, alpha=0.75) + theme_bw() +
   labs(colour = "Outlier Status")
 DO_plot
 
 
-wtemp_plot <- DO_flag_BWL %>%
-  ggplot(aes(x = datetime, y = wtr, colour = wtr_outlier)) +
-  geom_point(size=1, alpha=0.75) + theme_bw() +
-  labs(colour = "Outlier Status")
-wtemp_plot
 
-
-
-# saveRDS(DO_flag_BWU, file = "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/24_BWU_DO_flag_record.rds")
+# saveRDS(DO_flag_GBU, file = "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_GBU_DO_flag_record.rds")
 
 
 

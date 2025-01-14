@@ -9,7 +9,7 @@ library(plotly)
 ## Read in DO data from GBL
 ##===========================
 ## BWL
-BWL_DO <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/24_BWL_DO_flag_record.rds")
+BWL_DO <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_BWL_DO_flag_record.rds")
 
 NS_plot_DO <- plot_ly(data = BWL_DO, x = ~datetime, y = ~Dissolved_Oxygen_offset, type = 'scatter',  mode = 'markers',  color = ~Concat_Date) %>%
   layout(xaxis = list(title = "Date and Time"),
@@ -38,22 +38,64 @@ siteNo_BW <- "10336660"
 # Define the parameter codes for flow and stage
 pCode_flow <- "00060"
 pCode_stage <- "00065"
+pCode_temp <-"00010"
 
 # Set the start date to "1980-01-01" and end date to today (current date)
-start.date <- "2020-09-26"
-end.date <- "2024-08-18"  # Use
-## Download hourly flow data for both sites separately and combine
-HRflow_data_BW <- readNWISuv(siteNumbers = siteNo_BW, parameterCd = c("00060", "00065"), startDate = start.date, endDate = end.date) 
+start.date <- "2021-04-20"
+end.date <- "2024-08-10"
 
+HRflow_data_BW <- readNWISuv(
+  siteNumbers = siteNo_BW,
+  parameterCd = c(pCode_temp, pCode_flow, pCode_stage),
+  startDate = start.date,
+  endDate = end.date
+) %>%
+  select(
+    datetime = "dateTime",
+    dischargeCFS = "X_00060_00000",
+    wtr_USGS = "X_.AquaTroll._00010_00000",
+    stageF = "X_00065_00000"
+  ) %>%
+  mutate(datetime = as.POSIXct(datetime, tz = "UTC") %>% 
+           with_tz("America/Los_Angeles")) # Convert to Pacific Time
+
+### mutate for SI units: 
 HRflow_BW <- HRflow_data_BW %>%
-  select(datetime = "dateTime", dischargeCFS = "X_00060_00000", stageF = "X_00065_00000") %>%
   mutate(
     dischargeCMS= c(dischargeCFS*0.0283168),
     scale_Q= c((dischargeCFS*0.0283168)/29.00787),
     stage_m= c(stageF*0.3048)
   ) 
 
+## ===============================
+### double check USGS timestamp:
+# Filter data for a specific date range
+HRflow_data_plot <- HRflow_BW %>%
+  mutate(date = as.Date(datetime),
+         week = week(datetime)) %>%
+  filter(date > as.Date("2021-07-24") & date < as.Date("2021-10-01"))
 
+# Create a dataframe with noon times
+noon_lines <- HRflow_data_plot %>%
+  group_by(date) %>%
+  summarize(noon_time = as.POSIXct(paste(date, "12:00:00"), tz = "America/Los_Angeles")) %>%
+  ungroup()
+
+# Plot with noon vertical lines
+HRflow_data_plot %>%
+  ggplot(aes(y = wtr_USGS, x = datetime)) +
+  geom_line(aes(y = wtr_USGS, x = datetime), col = "red") + 
+  geom_line(aes(y = (discharge_USGS_cfs*10), x = datetime), col = "#46b8b8",alpha = .7, size = 0.75) +
+  geom_vline(data = noon_lines, aes(xintercept = as.numeric(noon_time)), 
+             linetype = "dashed", color = "grey50") +
+  theme_bw() +
+  facet_wrap(~week, scales = "free", ncol = 1) +
+  scale_x_datetime(date_breaks = "12 hours", date_labels = "%H:%M") 
+
+
+
+## ===============================
+### read in morphology data:
 morph_dat <- read.csv("R:/Users/kloria/Documents/Stream_Metab_24/DO_calibration_dat/stream_morphology.csv") %>%
   mutate(
     datetime = as.POSIXct(Date, format="%Y-%m-%dT%H:%M:%SZ"),
@@ -61,10 +103,7 @@ morph_dat <- read.csv("R:/Users/kloria/Documents/Stream_Metab_24/DO_calibration_
   filter(Site=="BWL")
 
 hist(morph_dat$Discharge_cms)
-# 
-# HRflow_BW <- HRflow_BW %>%
-#   left_join(morph_dat, by = c("datetime"))
-# 
+
 
 morphQ <- morph_dat %>%
   left_join(HRflow_BW, by = c("datetime"))
