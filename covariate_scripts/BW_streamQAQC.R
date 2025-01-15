@@ -8,8 +8,9 @@ library(plotly)
 
 ##==========================
 ## create date sequence: 
+##==========================
 ## create an empty vector of times 
-# Define the start and end dates
+#   Define the start and end dates
 start_datetime <- as.POSIXct("2020-09-27 00:00:00", tz = "America/Los_Angeles")
 end_datetime <- as.POSIXct("2024-08-17 00:00:00", tz = "America/Los_Angeles")
 

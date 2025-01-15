@@ -19,7 +19,8 @@ library(lubridate)
 stream_baro_dat <- read.csv("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/climate_dat/stream_NLDAS_baro.csv") %>%
   mutate(datetime = as.POSIXct(datetime, format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")) %>%
   with_tz(tz = "America/Los_Angeles") %>%
-  select(site, datetime, baro_Pa)
+  filter(site=="GBL") %>%
+  select(datetime, baro_Pa)
 
 str(stream_baro_dat)
 
@@ -30,6 +31,40 @@ stream_baro_dat %>%
   #facet_wrap(~ site)
 
 stream_baro_dat$baro_mmHg <- c(stream_baro_dat$baro_Pa* 0.00750062)
+
+
+
+##==========================
+## Double check the timestamps of all temp data
+##==========================
+
+temp_data_plot <- stream_baro_dat %>%
+  mutate(date = as.Date(datetime),
+         week = week(datetime)) %>%
+  filter(date > as.Date("2023-09-13") & date < as.Date("2023-09-27"))
+
+
+# Create a dataframe with noon times
+noon_lines <- temp_data_plot %>%
+  group_by(date) %>%
+  summarize(noon_time = as.POSIXct(paste(date, "12:00:00"), tz = "America/Los_Angeles")) %>%
+  ungroup()
+
+
+# Plot with noon vertical lines
+#  the pressure is at its lowest around 4 a.m./p.m., and at its highest around 10 a.m./p.m.
+temp_data_plot %>%
+  ggplot(aes(y = baro_Pa, x = datetime)) +
+  geom_line(aes(y = baro_Pa, x = datetime), col = "red") +
+  # geom_line(aes(y = wtr, x = datetime), col = "goldenrod", size=1.5, alpha = .7) +
+  # geom_point(aes(y = do.obs*1.5, x = datetime), col = "purple", size=1.5) + 
+  geom_vline(data = noon_lines, aes(xintercept = as.numeric(noon_time)), 
+             linetype = "dashed", color = "grey50") +
+  theme_bw() +
+  facet_wrap(~week, scales = "free", ncol = 1) +
+  scale_x_datetime(date_breaks = "12 hours", date_labels = "%H:%M") +
+  labs(color = "Legend")
+##==========================
 
 stream_wq_dat <- read.csv("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/WaterQual_dat/YSIWaterQuality.csv") %>%
   mutate(date=as.Date(date, format("%m/%d/%y")))
@@ -47,7 +82,7 @@ stream_wq_dat <- stream_wq_dat%>%
   select(site, mmHg, datetime)
 
 baro_dat2 <- stream_baro_dat %>%
-  left_join(stream_wq_dat, by = c("datetime", "site"))
+  left_join(stream_wq_dat, by = c("datetime"))
 
 baro_dat_BW <- baro_dat2 %>%
   filter(site=="BWL") 
@@ -67,6 +102,8 @@ baro_dat_BW %>%
   geom_point(alpha=0.7) + theme_bw() + 
   theme(legend.position = "right")  +
   facet_wrap(~ site)
+
+
 
 baro_dat_BW$corrected_baro_mb <- c(baro_dat_BW$corrected_baro_mmHg *1.33322)
 range(baro_dat_BW$corrected_baro_mb)
@@ -199,141 +236,192 @@ BWL_spc<- BWL_spc%>%
 ###===========================
 ## create an empty vector of times 
 # Define the start and end dates
-start_datetime <- as.POSIXct("2020-09-27 07:15:00", tz = "America/Los_Angeles")
-end_datetime <- as.POSIXct("2024-08-16 07:00:00", tz = "America/Los_Angeles")
+start_datetime <- as.POSIXct("2020-09-27 07:05:00", tz = "America/Los_Angeles")
+end_datetime <- as.POSIXct("2024-08-16 06:55:00", tz = "America/Los_Angeles")
 
 # Create a sequence of datetime values in 15-minute intervals
-datetime_seq <- seq(from = start_datetime, to = end_datetime, by = "15 mins")
+datetime_seq <- seq(from = start_datetime, to = end_datetime, by = "5 mins")
 
 # Convert to a dataframe
 datetime_df <- data.frame(datetime = datetime_seq)
+
+
+
+start_datetime_GB <- as.POSIXct("2021-03-11 07:05:00", tz = "America/Los_Angeles")
+end_datetime_GB <- as.POSIXct("2024-10-16 06:55:00", tz = "America/Los_Angeles")
+
+# Create a sequence of datetime values in 15-minute intervals
+datetime_seq_GB <- seq(from = start_datetime_GB, to = end_datetime_GB, by = "5 mins")
+
+# Convert to a dataframe
+datetime_df_GB <- data.frame(datetime = datetime_seq_GB)
+
+
 
 
 ###===========================
 ## Read in DO data 
 ###===========================
 
-BW_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/flagged/24_BWL_DO_flag_recordv2.rds")
-
-BW_df <- datetime_df %>%
-  left_join(BW_DO_dat,  by = c("datetime"))
-
-
-# Round datetime to the nearest 15 minutes
-BW_DO_dat1 <- BW_df %>%
+BW_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_BWL_DO_flag_flow.rds")%>%
+  filter(wtr_outlier<1 & DO_outlier <1 ) %>%
   mutate(
-    datetime = round_date(datetime, unit = "15 minutes")
-  ) %>%
-  # Group by rounded datetime and aggregate selected columns to their nearest value within each 15-minute interval
-  group_by(datetime, site, maintenance_flag, DO_outlier, wtr_outlier, 
-           fouling_flag, discharge_D50_flag, 
-           discharge_D100_flag, discharge_T25_flag, discharge_T10_flag, discharge_T50_flag, 
-           discharge_T100_flag, discharge_T150_flag, wtr_D50_flag, wtr_D100_flag) %>%
-  summarise(
+    maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+    fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag)
+  )
+  
+
+BW_DO_dat_15 <- BW_DO_dat %>%
+filter(datetime > as.POSIXct("2021-04-29 12:15:00")) %>%  
+# Step 1: Create a column for rounding to the nearest 15 minutes
+mutate(
+  rounded_datetime_15min = as.POSIXct(
+    round(as.numeric(datetime) / (15 * 60)) * (15 * 60),
+    origin = "1970-01-01",
+    tz = "America/Los_Angeles")) %>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
     do.obs = mean(do.obs, na.rm = TRUE),
     wtr = mean(wtr, na.rm = TRUE),
-    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
-    stage_m = mean(stage_m, na.rm = TRUE),
-    depth = mean(depth, na.rm = TRUE),
-    v = mean(v, na.rm = TRUE),
-    .groups = "drop"
-  )
+    dischargeCMS = mean(adjusted_dischargeCMS, na.rm = TRUE),
+    depth = mean(adjusted_depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v_estimation, na.rm = TRUE))
+    
 
-names(BW_DO_dat1)
+BW_dat_15q <-BW_DO_dat_15 %>%
+  left_join(BWL_spc, by = c("rounded_datetime_15min" = "datetime")) %>%
+  left_join(stream_baro_dat, by = c("rounded_datetime_15min" = "datetime"))
 
-BW_DO_dat1 <- BW_DO_dat1%>%
-  select(site, datetime, do.obs, wtr, dischargeCMS, stage_m, depth, v,
-         maintenance_flag, DO_outlier, wtr_outlier, 
-         fouling_flag, discharge_D50_flag, 
-         discharge_D100_flag, discharge_T25_flag, discharge_T10_flag, discharge_T50_flag, 
-         discharge_T100_flag, discharge_T150_flag)
+names(BW_dat_15q)
 
+str(BW_dat_15q)
 
-BW_dat <-BW_DO_dat1 %>%
-  left_join(BWL_spc, by = c("datetime")) %>%
-  left_join(baro_dat_BW, by = c("datetime", "site"))
-
-names(BW_dat)
-
-str(BW_dat)
-
-BW_dat %>%
-  ggplot(aes(x = datetime, y = sal_PSU, color=as.factor(site))) +
+BW_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSU)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
-BW_dat %>%
-  ggplot(aes(x = datetime, y = do.obs, color=as.factor(site))) +
+BW_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = do.obs)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
-BW_dat$sal_PSUi <- na.approx(BW_dat$sal_PSU, x = BW_dat$datetime, na.rm = FALSE)
+BW_dat_15q$sal_PSUi <- na.approx(BW_dat_15q$sal_PSU, x = BW_dat_15q$rounded_datetime_15min, na.rm = FALSE)
 
-
-BW_datq <- BW_dat %>%
-  arrange(datetime) %>%
-  mutate(
-    # Calculate 6-month rolling mean of SPC (in days, approx. 182 days)
-    SPC_6mo_mean = rollapply(sal_PSU, width = 24, FUN = mean, 
-                             fill = NA, align = "right", na.rm = TRUE),
-    # Fill NA values in SPC with the 6-month rolling mean where SPC is NA
-    sal_PSU2 = ifelse(is.na(sal_PSU), SPC_6mo_mean, sal_PSU)
-  ) %>%
-  select(-SPC_6mo_mean) # Optionally, remove the helper column
-
-BW_dat %>%
-  ggplot(aes(x = datetime, y = sal_PSUi, color=as.factor(site))) +
+BW_dat_15q1 %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSUi)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
-
-BW_datq %>%
-  ggplot(aes(x = datetime, y = sal_PSU2, color=as.factor(site))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-BW_datq<- BW_datq %>%
+BW_datq<- BW_dat_15q1 %>%
   fill(sal_PSUi,.direction = "up")%>%
-  fill(dischargeCMS,.direction = "up")%>% 
-  fill(stage_m,.direction = "up")%>% 
-  fill(depth,.direction = "up")%>%
-  fill(sal_PSU2,.direction = "up")%>%
-  fill(corrected_baro_mb,.direction = "up")%>%
+  fill(baro_mmHg,.direction = "up")%>%
   dplyr::ungroup()
 
 summary(BW_datq)
 
-BW_datq<- BW_datq %>%
+BW_datq1<- BW_datq %>%
   fill(sal_PSUi,.direction = "down")%>%
-  fill(dischargeCMS,.direction = "down")%>% 
-  fill(stage_m,.direction = "down")%>% 
-  fill(depth,.direction = "down")%>%
-  fill(sal_PSU2,.direction = "down")%>%
-  fill(corrected_baro_mb,.direction = "down")%>%
+  fill(baro_mmHg,.direction = "down")%>%
   dplyr::ungroup()
 
-BW_datq$DO.sat <- calc_DO_sat(BW_datq$wtr, 
-                             BW_datq$corrected_baro_mb,
-                          BW_datq$sal_PSU2, 
+summary(BW_datq1)
+
+BW_datqb<-  BW_datq1%>% 
+  mutate(
+  maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+  fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag))
+
+
+
+library(dplyr)
+library(zoo)
+library(lubridate)
+
+
+BW_datq_a <- BW_datqb %>%
+  filter(rounded_datetime_15min > as.POSIXct("2021-04-29 12:30:00"))%>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
+    do.obs = mean(do.obs, na.rm = TRUE),
+    wtr = mean(wtr, na.rm = TRUE),
+    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
+    depth = mean(depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v, na.rm = TRUE),
+    SPC= mean(SPC, na.rm = TRUE),
+    sal_PSUi= mean(sal_PSUi, na.rm = TRUE),
+    baro_mmHg = mean(baro_mmHg, na.rm = TRUE))
+
+
+# Specify columns to infill
+columns_to_infill <- c("do.obs", "wtr", "dischargeCMS", "depth", 
+                       "wtr_USGS", "w", "v", "SPC", "baro_mmHg", "sal_PSUi")
+
+# Define the rolling 3-hour window infill function
+infill_rolling_avg <- function(data, columns, window_size = 3 * 60) {
+  data %>%
+    arrange(rounded_datetime_15min) %>%  # Ensure data is sorted by time
+    group_by(rounded_datetime_15min) %>%
+    mutate(across(all_of(columns), 
+                  ~ ifelse(is.na(.), 
+                           rollapplyr(.x, width = window_size / 15, 
+                                      FUN = mean, fill = NA, na.rm = TRUE, partial = TRUE), 
+                           .x))) %>%
+    ungroup()
+}
+
+# Apply the infill function to the dataset
+BW_datq2 <- infill_rolling_avg(BW_datq_a, columns_to_infill)
+
+summary(BW_datq2)
+summary(BW_datq_a)
+
+
+BW_datq2$corrected_baro_mb <-c(BW_datq2$baro_mmHg*1.33322)
+BW_datq3 <- BW_datq2 %>% 
+  mutate(
+    sal_PSUi = ifelse(sal_PSUi<0.0001, 0.0001, sal_PSUi))
+
+summary(BW_datq3)
+
+###########
+###########
+
+BW_datq3$DO.sat <- calc_DO_sat(BW_datq3$wtr, 
+                               BW_datq3$corrected_baro_mb,
+                               BW_datq3$sal_PSUi, 
                           model = "garcia-benson") 
-hist(BW_datq$DO.sat)
+hist(BW_datq3$DO.sat)
 ?calc_DO_sat()
 
-BW_datq$year <- year(BW_datq$datetime)
-BW_datq$yday <- yday(BW_datq$datetime)
+BW_datq3$year <- year(BW_datq3$rounded_datetime_15min)
+BW_datq3$yday <- yday(BW_datq3$rounded_datetime_15min)
 
 
-BW_datq <- BW_datq %>%
+BWU_datq4<- BW_datq3 %>%
+  fill(dischargeCMS,.direction = "down")%>%
+  fill(depth,.direction = "down")%>%
+  dplyr::ungroup()
+
+summary(BWU_datq4)
+
+
+
+BWU_datq4 <- BWU_datq4 %>%
   mutate(DO_supersaturated = ifelse(do.obs > DO.sat, TRUE, FALSE))
 
 
-BW_datq %>%
+BWU_datq4 %>%
   ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated))) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right") + 
   facet_grid(year~.)
 
-BW_datq %>%
+BW_datq3 %>%
   filter(dischargeCMS<9)%>%
   ggplot(aes(x = dischargeCMS, y = DO.sat, color=as.factor(DO_supersaturated), 
              shape=as.factor(discharge_T50_flag))) +
@@ -341,14 +429,9 @@ BW_datq %>%
   theme(legend.position = "right") +  facet_grid(year~.)
 
 
-share_sat <- BW_datq %>%
-  #filter(maintenance_flag<1 & fouling_flag <1)%>%
-  ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated), 
-             shape=as.factor(discharge_T50_flag))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right") +  facet_grid(year~.)
+summary(BW_datq3)
 
-# saveRDS(BW_datq, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/24_BWL_DO_flag_sat.rds")
+# saveRDS(BWU_datq4, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/25_BWL_DO_flag_sat.rds")
 
 
 ###===========================
@@ -368,154 +451,166 @@ BWU_spc<- BWU_spc%>%
 ###===========================
 
 # "R:\Users\kloria\Documents\Stream_Metab_24\Core_sites\offset_DO_dat\24_BWU_DO_flag_recordv3.rds"
-
-BWU_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/24_BWU_DO_flag_recordv3.rds")
-
-BWU_df <- datetime_df %>%
-  left_join(BWU_DO_dat,  by = c("datetime"))
-
-BWU_df <- BWU_df%>%
-  filter(datetime > as.POSIXct("2021-06-29 08:05:00 PDT"))
-
-###
-BWU_DO_dat1 %>%
-  ggplot(aes(x = datetime , y = do.obs)) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-
-# Round datetime to the nearest 15 minutes
-BWU_DO_dat1 <- BWU_df %>%
+# "R:\Users\kloria\Documents\Stream_Metab_24\Core_sites\offset_DO_dat\25_BWU_DO_flag_flow.rds"
+BWU_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_BWU_DO_flag_flow.rds")%>%
+  filter(wtr_outlier<1 & DO_outlier <1 ) %>%
   mutate(
-    datetime = round_date(datetime, unit = "15 minutes")
-  ) %>%
-  # Group by rounded datetime and aggregate selected columns to their nearest value within each 15-minute interval
-  dplyr::group_by(datetime, site, maintenance_flag, DO_outlier, wtr_outlier, 
-           fouling_flag, discharge_D50_flag, 
-           discharge_D100_flag, discharge_T25_flag, discharge_T10_flag, discharge_T50_flag, 
-           discharge_T100_flag, discharge_T150_flag) %>%
-  summarise(
-    do.obs = mean(do.obs, na.rm = TRUE),
-    wtr = mean(wtr, na.rm = TRUE),
-    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
-    stage_m = mean(stage_m, na.rm = TRUE),
-    depth = mean(depth, na.rm = TRUE),
-    v = mean(v, na.rm = TRUE),
-    .groups = "drop"
+    maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+    fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag)
   )
 
-names(BWU_DO_dat1)
-
-BWU_DO_dat1 <- BWU_DO_dat1%>%
-  select(site, datetime, do.obs, wtr, dischargeCMS, stage_m, depth, v,
-         maintenance_flag, DO_outlier, wtr_outlier, 
-         fouling_flag, discharge_D50_flag, 
-         discharge_D100_flag, discharge_T25_flag, discharge_T10_flag, discharge_T50_flag, 
-         discharge_T100_flag, discharge_T150_flag)
-
-
-BWU_dat <-BWU_DO_dat1 %>%
-  left_join(BWU_spc, by = c("datetime")) %>%
-  left_join(baro_dat_BWU, by = c("datetime", "site"))
-
-names(BWU_dat)
-
-str(BWU_dat)
-
-BWU_dat %>%
-  ggplot(aes(x = datetime, y = sal_PSU, color=as.factor(site))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-BWU_dat %>%
-  ggplot(aes(x = datetime, y = do.obs, color=as.factor(site))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-BWU_dat$sal_PSUi <- na.approx(BWU_dat$sal_PSU, x = BWU_dat$datetime, na.rm = FALSE)
-
-
-BWU_datq <- BWU_dat %>%
-  arrange(datetime) %>%
+BWU_DO_dat_15 <- BWU_DO_dat %>%
+  filter(datetime > as.POSIXct("2021-04-29 12:15:00")) %>%  
+  # Step 1: Create a column for rounding to the nearest 15 minutes
   mutate(
-    # Calculate 6-month rolling mean of SPC (in days, approx. 182 days)
-    SPC_6mo_mean = rollapply(sal_PSU, width = 24, FUN = mean, 
-                             fill = NA, align = "right", na.rm = TRUE),
-    # Fill NA values in SPC with the 6-month rolling mean where SPC is NA
-    sal_PSU2 = ifelse(is.na(sal_PSU), SPC_6mo_mean, sal_PSU)
-  ) %>%
-  select(-SPC_6mo_mean) # Optionally, remove the helper column
+    rounded_datetime_15min = as.POSIXct(
+      round(as.numeric(datetime) / (15 * 60)) * (15 * 60),
+      origin = "1970-01-01",
+      tz = "America/Los_Angeles")) %>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
+    do.obs = mean(do.obs, na.rm = TRUE),
+    wtr = mean(wtr, na.rm = TRUE),
+    dischargeCMS = mean(adjusted_dischargeCMS, na.rm = TRUE),
+    depth = mean(adjusted_depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v_estimation, na.rm = TRUE))
 
-BWU_dat %>%
-  ggplot(aes(x = datetime, y = sal_PSUi, color=as.factor(site))) +
+
+BWU_dat_15q <-BWU_DO_dat_15 %>%
+  left_join(BWU_spc, by = c("rounded_datetime_15min" = "datetime")) %>%
+  left_join(stream_baro_dat, by = c("rounded_datetime_15min" = "datetime"))
+
+names(BWU_dat_15q)
+
+str(BWU_dat_15q)
+
+BWU_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSU)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
+###
 
-BWU_datq %>%
-  ggplot(aes(x = datetime, y = sal_PSU2, color=as.factor(site))) +
+BWU_dat_15q$sal_PSUi <- na.approx(BWU_dat_15q$sal_PSU, x = BWU_dat_15q$rounded_datetime_15min, na.rm = FALSE)
+
+BWU_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSUi)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
-BWU_datq1 <- BWU_datq  %>%
+BWU_datq<- BWU_dat_15q %>%
   fill(sal_PSUi,.direction = "up")%>%
-  fill(dischargeCMS,.direction = "up")%>% 
-  fill(stage_m,.direction = "up")%>% 
-  fill(depth,.direction = "up")%>%
-  fill(sal_PSU2,.direction = "up")%>%
-  fill(corrected_baro_mb,.direction = "up")%>%
+  fill(baro_mmHg,.direction = "up")%>%
   dplyr::ungroup()
 
 summary(BWU_datq)
 
-BWU_datq<- BWU_datq1 %>%
+BWU_datq1<- BWU_datq %>%
   fill(sal_PSUi,.direction = "down")%>%
-  fill(dischargeCMS,.direction = "down")%>% 
-  fill(stage_m,.direction = "down")%>% 
-  fill(depth,.direction = "down")%>%
-  fill(sal_PSU2,.direction = "down")%>%
-  fill(corrected_baro_mb,.direction = "down")%>%
+  fill(baro_mmHg,.direction = "down")%>%
   dplyr::ungroup()
 
-BWU_datq$DO.sat <- calc_DO_sat(BWU_datq$wtr, 
-                              BWU_datq$corrected_baro_mb,
-                              BWU_datq$sal_PSU2, 
-                              model = "garcia-benson") 
-hist(BWU_datq$DO.sat)
-?calc_DO_sat()
+summary(BWU_datq1)
 
-BWU_datq$year <- year(BWU_datq$datetime)
-BWU_datq$yday <- yday(BWU_datq$datetime)
+BWU_datqb<-  BWU_datq1%>% 
+  mutate(
+    maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+    fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag))
+
+library(dplyr)
+library(zoo)
+library(lubridate)
+
+BWU_datq_a <- BWU_datqb %>%
+  filter(rounded_datetime_15min > as.POSIXct("2021-04-29 12:30:00"))%>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
+    do.obs = mean(do.obs, na.rm = TRUE),
+    wtr = mean(wtr, na.rm = TRUE),
+    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
+    depth = mean(depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v, na.rm = TRUE),
+    SPC= mean(SPC, na.rm = TRUE),
+    sal_PSUi= mean(sal_PSUi, na.rm = TRUE),
+    baro_mmHg = mean(baro_mmHg, na.rm = TRUE))
 
 
-BWU_datq <- BWU_datq %>%
+# Specify columns to infill
+columns_to_infill <- c("do.obs", "wtr", "dischargeCMS", "depth", 
+                       "wtr_USGS", "w", "v", "SPC", "baro_mmHg", "sal_PSUi")
+
+# Define the rolling 3-hour window infill function
+infill_rolling_avg <- function(data, columns, window_size = 3 * 60) {
+  data %>%
+    arrange(rounded_datetime_15min) %>%  # Ensure data is sorted by time
+    group_by(rounded_datetime_15min) %>%
+    mutate(across(all_of(columns), 
+                  ~ ifelse(is.na(.), 
+                           rollapplyr(.x, width = window_size / 15, 
+                                      FUN = mean, fill = NA, na.rm = TRUE, partial = TRUE), 
+                           .x))) %>%
+    ungroup()
+}
+
+# Apply the infill function to the dataset
+BWU_datq2 <- infill_rolling_avg(BWU_datq_a, columns_to_infill)
+
+
+summary(BWU_datq2)
+summary(BWU_datq_a)
+
+
+BWU_datq3<- BWU_datq2 %>%
+  fill(dischargeCMS,.direction = "down")%>%
+  fill(depth,.direction = "down")%>%
+  dplyr::ungroup()
+
+summary(BWU_datq3)
+
+
+BWU_datq3$corrected_baro_mb <-c(BWU_datq3$baro_mmHg*1.33322)
+BWU_datq4 <- BWU_datq3 %>% 
+  mutate(
+    sal_PSUi = ifelse(sal_PSUi<0.0001, 0.0001, sal_PSUi),
+    sal_PSUi = ifelse(is.na(sal_PSUi), 0.0001, sal_PSUi)
+    )
+
+BWU_datq4$corrected_baro_mb <-c(BWU_datq4$baro_mmHg*1.33322)
+
+
+summary(BWU_datq4)
+
+
+###########
+
+BWU_datq4$DO.sat <- calc_DO_sat(BWU_datq4$wtr, 
+                               BWU_datq4$corrected_baro_mb,
+                               BWU_datq4$sal_PSUi, 
+                               model = "garcia-benson") 
+hist(BWU_datq4$DO.sat)
+
+
+BWU_datq4$year <- year(BWU_datq4$rounded_datetime_15min)
+BWU_datq4$yday <- yday(BWU_datq4$rounded_datetime_15min)
+
+
+BWU_datq4 <- BWU_datq4 %>%
   mutate(DO_supersaturated = ifelse(do.obs > DO.sat, TRUE, FALSE))
 
-
-BWU_datq %>%
+BWU_datq4 %>%
   ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated))) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right") + 
   facet_grid(year~.)
 
-BWU_datq %>%
-  filter(dischargeCMS<9)%>%
-  ggplot(aes(x = dischargeCMS, y = DO.sat, color=as.factor(DO_supersaturated), 
-             shape=as.factor(discharge_T50_flag))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right") +  facet_grid(year~.)
 
+summary(BWU_datq4)
 
-share_sat <- BWU_datq %>%
-  #filter(maintenance_flag<1 & fouling_flag <1)%>%
-  ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated), 
-             shape=as.factor(discharge_T50_flag))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right") +  facet_grid(year~.)
-
-# saveRDS(BWU_datq, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/24_BWU_DO_flag_sat.rds")
-
-
+# saveRDS(BWU_datq4, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/25_BWU_DO_flag_sat.rds")
 
 
 ###===========================
@@ -535,146 +630,164 @@ GBL_spc<- GBL_spc%>%
 ## Read in DO data 
 ###===========================
 
-GBL_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/flagged/24_GBL_DO_flag_recordv2.rds")
-
-datetime_df <- datetime_df %>%
-  filter(datetime> as.POSIXct("2021-03-12 06:00:00"))
-
-
-GBL_df <- datetime_df %>%
-  left_join(GBL_DO_dat,  by = c("datetime"))
-
-# Round datetime to the nearest 15 minutes
-GBL_DO_dat1 <- GBL_df %>%
+GBL_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_GBL_DO_flag_flow.rds")%>%
+  filter(wtr_outlier<1 & DO_outlier <1 ) %>%
   mutate(
-    datetime = round_date(datetime, unit = "15 minutes")
-  ) %>%
-  # Group by rounded datetime and aggregate selected columns to their nearest value within each 15-minute interval
-  group_by(datetime, site, maintenance_flag, DO_outlier, wtr_outlier, 
-           fouling_flag, 
-           discharge_D50_flag, 
-           discharge_D100_flag, 
-           discharge_T25_flag, 
-           discharge_T50_flag,
-           discharge_T100_flag) %>%
-  summarise(
-    do.obs = mean(do.obs, na.rm = TRUE),
-    wtr = mean(wtr, na.rm = TRUE),
-    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
-    stage_m = mean(stage_m, na.rm = TRUE),
-    depth = mean(depth, na.rm = TRUE),
-    v = mean(v, na.rm = TRUE),
-    .groups = "drop"
+    maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+    fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag)
   )
 
-
-GBL_DO_dat1 <- GBL_DO_dat1%>%
-  select(site, datetime, do.obs, wtr, dischargeCMS, stage_m, depth, v,
-         maintenance_flag, DO_outlier, wtr_outlier, 
-         fouling_flag, discharge_D50_flag, 
-         discharge_D100_flag, discharge_T25_flag, discharge_T50_flag, 
-         discharge_T100_flag)
-
-
-GBL_dat <-GBL_DO_dat1 %>%
-  left_join(GBL_spc, by = c("datetime")) %>%
-  left_join(baro_dat_GBL, by = c("datetime", "site"))
-
-names(GBL_dat)
-str(GBL_dat)
-
-GBL_dat %>%
-  ggplot(aes(x = datetime, y = sal_PSU, color=as.factor(site))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-GBL_dat %>%
-  ggplot(aes(x = datetime, y = do.obs, color=as.factor(site))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-GBL_dat$sal_PSUi <- na.approx(GBL_dat$sal_PSU, x = GBL_dat$datetime, na.rm = FALSE)
-
-
-GBL_datq <- GBL_dat %>%
-  arrange(datetime) %>%
+GBL_DO_dat_15 <- GBL_DO_dat %>%
+ # filter(datetime > as.POSIXct("2021-02-29 12:15:00")) %>%  
+  # Step 1: Create a column for rounding to the nearest 15 minutes
   mutate(
-    # Calculate 6-month rolling mean of SPC (in days, approx. 182 days)
-    SPC_6mo_mean = rollapply(sal_PSU, width = 24, FUN = mean, 
-                             fill = NA, align = "right", na.rm = TRUE),
-    # Fill NA values in SPC with the 6-month rolling mean where SPC is NA
-    sal_PSU2 = ifelse(is.na(sal_PSU), SPC_6mo_mean, sal_PSU)
-  ) %>%
-  select(-SPC_6mo_mean) # Optionally, remove the helper column
+    rounded_datetime_15min = as.POSIXct(
+      round(as.numeric(datetime) / (15 * 60)) * (15 * 60),
+      origin = "1970-01-01",
+      tz = "America/Los_Angeles")) %>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
+    do.obs = mean(do.obs, na.rm = TRUE),
+    wtr = mean(wtr, na.rm = TRUE),
+    dischargeCMS = mean(adjusted_dischargeCMS, na.rm = TRUE),
+    depth = mean(adjusted_depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v_estimation, na.rm = TRUE))
 
-GBL_datq %>%
-  ggplot(aes(x = datetime, y = sal_PSUi, color=as.factor(site))) +
+
+GBL_dat_15q <-GBL_DO_dat_15 %>%
+  left_join(GBL_spc, by = c("rounded_datetime_15min" = "datetime")) %>%
+  left_join(stream_baro_dat, by = c("rounded_datetime_15min" = "datetime"))
+
+names(GBL_dat_15q)
+
+str(GBL_dat_15q)
+
+GBL_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSU)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
+###
 
-GBL_datq %>%
-  ggplot(aes(x = datetime, y = sal_PSU2, color=as.factor(site))) +
+GBL_dat_15q$sal_PSUi <- na.approx(GBL_dat_15q$sal_PSU, x = GBL_dat_15q$rounded_datetime_15min, na.rm = FALSE)
+
+GBL_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSUi)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
-GBL_datq <- GBL_datq  %>%
+GBL_datq<- GBL_dat_15q %>%
   fill(sal_PSUi,.direction = "up")%>%
-  fill(dischargeCMS,.direction = "up")%>% 
-  fill(stage_m,.direction = "up")%>% 
-  fill(depth,.direction = "up")%>%
-  fill(sal_PSU2,.direction = "up")%>%
-  fill(corrected_baro_mb,.direction = "up")%>%
+  fill(baro_mmHg,.direction = "up")%>%
   dplyr::ungroup()
 
 summary(GBL_datq)
 
-GBL_datq<- GBL_datq %>%
+GBL_datq1<- GBL_datq %>%
   fill(sal_PSUi,.direction = "down")%>%
-  fill(dischargeCMS,.direction = "down")%>% 
-  fill(stage_m,.direction = "down")%>% 
-  fill(depth,.direction = "down")%>%
-  fill(sal_PSU2,.direction = "down")%>%
-  fill(corrected_baro_mb,.direction = "down")%>%
+  fill(baro_mmHg,.direction = "down")%>%
   dplyr::ungroup()
 
-GBL_datq$DO.sat <- calc_DO_sat(GBL_datq$wtr, 
-                               GBL_datq$corrected_baro_mb,
-                               GBL_datq$sal_PSU2, 
-                               model = "garcia-benson") 
-hist(GBL_datq$DO.sat)
+summary(GBL_datq1)
+
+GBL_datqb<-  GBL_datq1%>% 
+  mutate(
+    maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+    fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag))
+
+library(dplyr)
+library(zoo)
+library(lubridate)
+
+GBL_datq_a <- GBL_datqb %>%
+  filter(rounded_datetime_15min > as.POSIXct("2021-04-29 12:30:00"))%>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
+    do.obs = mean(do.obs, na.rm = TRUE),
+    wtr = mean(wtr, na.rm = TRUE),
+    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
+    depth = mean(depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v, na.rm = TRUE),
+    SPC= mean(SPC, na.rm = TRUE),
+    sal_PSUi= mean(sal_PSUi, na.rm = TRUE),
+    baro_mmHg = mean(baro_mmHg, na.rm = TRUE))
 
 
-GBL_datq$year <- year(GBL_datq$datetime)
-GBL_datq$yday <- yday(GBL_datq$datetime)
+# Specify columns to infill
+columns_to_infill <- c("do.obs", "wtr", "dischargeCMS", "depth", 
+                       "wtr_USGS", "w", "v", "SPC", "baro_mmHg", "sal_PSUi")
 
-GBL_datq <- GBL_datq %>%
+# Define the rolling 3-hour window infill function
+infill_rolling_avg <- function(data, columns, window_size = 3 * 60) {
+  data %>%
+    arrange(rounded_datetime_15min) %>%  # Ensure data is sorted by time
+    group_by(rounded_datetime_15min) %>%
+    mutate(across(all_of(columns), 
+                  ~ ifelse(is.na(.), 
+                           rollapplyr(.x, width = window_size / 15, 
+                                      FUN = mean, fill = NA, na.rm = TRUE, partial = TRUE), 
+                           .x))) %>%
+    ungroup()
+}
+
+# Apply the infill function to the dataset
+GBL_datq2 <- infill_rolling_avg(GBL_datq_a, columns_to_infill)
+
+
+summary(GBL_datq2)
+summary(GBL_datq_a)
+
+
+GBL_datq3<- GBL_datq2 %>%
+  fill(dischargeCMS,.direction = "down")%>%
+  fill(depth,.direction = "down")%>%
+  dplyr::ungroup()
+
+summary(GBL_datq3)
+
+
+GBL_datq4 <- GBL_datq3 %>% 
+  mutate(
+    sal_PSUi = ifelse(sal_PSUi<0.0001, 0.0001, sal_PSUi),
+    sal_PSUi = ifelse(is.na(sal_PSUi), 0.0001, sal_PSUi)
+  )
+
+GBL_datq4$corrected_baro_mb <-c(GBL_datq4$baro_mmHg*1.33322)
+
+
+summary(GBL_datq4)
+
+
+###########
+
+GBL_datq4$DO.sat <- calc_DO_sat(GBL_datq4$wtr, 
+                                GBL_datq4$corrected_baro_mb,
+                                GBL_datq4$sal_PSUi, 
+                                model = "garcia-benson") 
+hist(GBL_datq4$DO.sat)
+
+
+GBL_datq4$year <- year(GBL_datq4$rounded_datetime_15min)
+GBL_datq4$yday <- yday(GBL_datq4$rounded_datetime_15min)
+
+
+GBL_datq4 <- GBL_datq4 %>%
   mutate(DO_supersaturated = ifelse(do.obs > DO.sat, TRUE, FALSE))
 
-
-GBL_datq %>%
+GBL_datq4 %>%
   ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated))) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right") + 
   facet_grid(year~.)
 
-GBL_datq %>%
-  filter(dischargeCMS<9)%>%
-  ggplot(aes(x = dischargeCMS, y = DO.sat, color=as.factor(DO_supersaturated), 
-             shape=as.factor(discharge_T50_flag))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right") +  facet_grid(year~.)
 
+summary(GBL_datq4)
 
-share_sat <- GBL_datq %>%
-  #filter(maintenance_flag<1 & fouling_flag <1)%>%
-  ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated), 
-             shape=as.factor(discharge_T50_flag))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right") +  facet_grid(year~.)
-
-# saveRDS(GBL_datq, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/24_GBL_DO_flag_sat.rds")
-
+# saveRDS(GBL_datq4, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/25_GBL_DO_flag_sat.rds")
 
 
 
@@ -694,141 +807,162 @@ GBU_spc<- GBU_spc%>%
 ###===========================
 ## Read in DO data 
 ###===========================
-
-GBU_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/flagged/24_GBU_DO_flag_recordv2.rds")
-
-GBU_df <- datetime_df %>%
-  left_join(GBU_DO_dat,  by = c("datetime"))
-
-# Round datetime to the nearest 15 minutes
-GBU_DO_dat1 <- GBU_df %>%
+GBU_DO_dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/25_GBU_DO_flag_flow.rds")%>%
+  filter(wtr_outlier<1 & DO_outlier <1 ) %>%
   mutate(
-    datetime = round_date(datetime, unit = "15 minutes")
-  ) %>%
-  # Group by rounded datetime and aggregate selected columns to their nearest value within each 15-minute interval
-  group_by(datetime, site, maintenance_flag, DO_outlier, wtr_outlier, 
-           fouling_flag, 
-           discharge_D50_flag, 
-           discharge_D100_flag, 
-           discharge_T25_flag, 
-           discharge_T50_flag,
-           discharge_T100_flag) %>%
-  summarise(
-    do.obs = mean(do.obs, na.rm = TRUE),
-    wtr = mean(wtr, na.rm = TRUE),
-    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
-    stage_m = mean(stage_m, na.rm = TRUE),
-    depth = mean(depth, na.rm = TRUE),
-    v = mean(v, na.rm = TRUE),
-    .groups = "drop"
+    maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+    fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag)
   )
 
-
-GBU_DO_dat1 <- GBU_DO_dat1%>%
-  select(site, datetime, do.obs, wtr, dischargeCMS, stage_m, depth, v,
-         maintenance_flag, DO_outlier, wtr_outlier, 
-         fouling_flag, discharge_D50_flag, 
-         discharge_D100_flag, discharge_T25_flag, discharge_T50_flag, 
-         discharge_T100_flag)
-
-
-GBU_dat <-GBU_DO_dat1 %>%
-  left_join(GBU_spc, by = c("datetime")) %>%
-  left_join(baro_dat_GBU, by = c("datetime", "site"))
-
-names(GBU_dat)
-str(GBU_dat)
-
-GBU_dat %>%
-  ggplot(aes(x = datetime, y = sal_PSU, color=as.factor(site))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-GBU_dat %>%
-  ggplot(aes(x = datetime, y = do.obs, color=as.factor(site))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right")
-
-GBU_dat$sal_PSUi <- na.approx(GBU_dat$sal_PSU, x = GBU_dat$datetime, na.rm = FALSE)
-
-
-GBU_datq <- GBU_dat %>%
-  arrange(datetime) %>%
+GBU_DO_dat_15 <- GBU_DO_dat %>%
+  # filter(datetime > as.POSIXct("2021-02-29 12:15:00")) %>%  
+  # Step 1: Create a column for rounding to the nearest 15 minutes
   mutate(
-    # Calculate 6-month rolling mean of SPC (in days, approx. 182 days)
-    SPC_6mo_mean = rollapply(sal_PSU, width = 24, FUN = mean, 
-                             fill = NA, align = "right", na.rm = TRUE),
-    # Fill NA values in SPC with the 6-month rolling mean where SPC is NA
-    sal_PSU2 = ifelse(is.na(sal_PSU), SPC_6mo_mean, sal_PSU)
-  ) %>%
-  select(-SPC_6mo_mean) # Optionally, remove the helper column
+    rounded_datetime_15min = as.POSIXct(
+      round(as.numeric(datetime) / (15 * 60)) * (15 * 60),
+      origin = "1970-01-01",
+      tz = "America/Los_Angeles")) %>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
+    do.obs = mean(do.obs, na.rm = TRUE),
+    wtr = mean(wtr, na.rm = TRUE),
+    dischargeCMS = mean(adjusted_dischargeCMS, na.rm = TRUE),
+    depth = mean(adjusted_depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v_estimation, na.rm = TRUE))
 
-GBU_datq %>%
-  ggplot(aes(x = datetime, y = sal_PSUi, color=as.factor(site))) +
+
+GBU_dat_15q <-GBU_DO_dat_15 %>%
+  left_join(GBU_spc, by = c("rounded_datetime_15min" = "datetime")) %>%
+  left_join(stream_baro_dat, by = c("rounded_datetime_15min" = "datetime"))
+
+names(GBU_dat_15q)
+
+str(GBU_dat_15q)
+
+GBU_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSU)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
+###
 
-GBU_datq %>%
-  ggplot(aes(x = datetime, y = sal_PSU2, color=as.factor(site))) +
+GBU_dat_15q$sal_PSUi <- na.approx(GBU_dat_15q$sal_PSU, x = GBU_dat_15q$rounded_datetime_15min, na.rm = FALSE)
+
+GBU_dat_15q %>%
+  ggplot(aes(x = rounded_datetime_15min, y = sal_PSUi)) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right")
 
-GBU_datq <- GBU_datq  %>%
+GBU_datq<- GBU_dat_15q %>%
   fill(sal_PSUi,.direction = "up")%>%
-  fill(dischargeCMS,.direction = "up")%>% 
-  fill(stage_m,.direction = "up")%>% 
-  fill(depth,.direction = "up")%>%
-  fill(sal_PSU2,.direction = "up")%>%
-  fill(corrected_baro_mb,.direction = "up")%>%
+  fill(baro_mmHg,.direction = "up")%>%
   dplyr::ungroup()
 
 summary(GBU_datq)
 
-GBU_datq<- GBU_datq %>%
+GBU_datq1<- GBU_datq %>%
   fill(sal_PSUi,.direction = "down")%>%
-  fill(dischargeCMS,.direction = "down")%>% 
-  fill(stage_m,.direction = "down")%>% 
-  fill(depth,.direction = "down")%>%
-  fill(sal_PSU2,.direction = "down")%>%
-  fill(corrected_baro_mb,.direction = "down")%>%
+  fill(baro_mmHg,.direction = "down")%>%
   dplyr::ungroup()
 
-GBU_datq$DO.sat <- calc_DO_sat(GBU_datq$wtr, 
-                               GBU_datq$corrected_baro_mb,
-                               GBU_datq$sal_PSU2, 
-                               model = "garcia-benson") 
-hist(GBU_datq$DO.sat)
+summary(GBU_datq1)
+
+GBU_datqb<-  GBU_datq1%>% 
+  mutate(
+    maintenance_flag = ifelse(is.na(maintenance_flag), 0, maintenance_flag),
+    fouling_flag = ifelse(is.na(fouling_flag), 0, fouling_flag))
+
+library(dplyr)
+library(zoo)
+library(lubridate)
+
+GBU_datq_a <- GBU_datqb %>%
+  filter(rounded_datetime_15min > as.POSIXct("2021-04-29 12:30:00"))%>%
+  group_by(rounded_datetime_15min, maintenance_flag, fouling_flag) %>%
+  summarize(
+    do.obs = mean(do.obs, na.rm = TRUE),
+    wtr = mean(wtr, na.rm = TRUE),
+    dischargeCMS = mean(dischargeCMS, na.rm = TRUE),
+    depth = mean(depth, na.rm = TRUE),
+    wtr_USGS = mean(wtr_USGS, na.rm = TRUE),
+    w = mean(w, na.rm = TRUE),
+    v = mean(v, na.rm = TRUE),
+    SPC= mean(SPC, na.rm = TRUE),
+    sal_PSUi= mean(sal_PSUi, na.rm = TRUE),
+    baro_mmHg = mean(baro_mmHg, na.rm = TRUE))
 
 
-GBU_datq$year <- year(GBU_datq$datetime)
-GBU_datq$yday <- yday(GBU_datq$datetime)
+# Specify columns to infill
+columns_to_infill <- c("do.obs", "wtr", "dischargeCMS", "depth", 
+                       "wtr_USGS", "w", "v", "SPC", "baro_mmHg", "sal_PSUi")
 
-GBU_datq <- GBU_datq %>%
+# Define the rolling 3-hour window infill function
+infill_rolling_avg <- function(data, columns, window_size = 3 * 60) {
+  data %>%
+    arrange(rounded_datetime_15min) %>%  # Ensure data is sorted by time
+    group_by(rounded_datetime_15min) %>%
+    mutate(across(all_of(columns), 
+                  ~ ifelse(is.na(.), 
+                           rollapplyr(.x, width = window_size / 15, 
+                                      FUN = mean, fill = NA, na.rm = TRUE, partial = TRUE), 
+                           .x))) %>%
+    ungroup()
+}
+
+# Apply the infill function to the dataset
+GBU_datq2 <- infill_rolling_avg(GBU_datq_a, columns_to_infill)
+
+
+summary(GBU_datq2)
+summary(GBU_datq_a)
+
+
+GBU_datq3<- GBU_datq2 %>%
+  fill(dischargeCMS,.direction = "down")%>%
+  fill(depth,.direction = "down")%>%
+  dplyr::ungroup()
+
+summary(GBU_datq3)
+
+
+GBU_datq4 <- GBU_datq3 %>% 
+  mutate(
+    sal_PSUi = ifelse(sal_PSUi<0.0001, 0.0001, sal_PSUi),
+    sal_PSUi = ifelse(is.na(sal_PSUi), 0.0001, sal_PSUi)
+  )
+
+GBU_datq4$corrected_baro_mb <-c(GBU_datq4$baro_mmHg*1.33322)
+
+
+summary(GBU_datq4)
+
+
+###########
+
+GBU_datq4$DO.sat <- calc_DO_sat(GBU_datq4$wtr, 
+                                GBU_datq4$corrected_baro_mb,
+                                GBU_datq4$sal_PSUi, 
+                                model = "garcia-benson") 
+hist(GBU_datq4$DO.sat)
+
+
+GBU_datq4$year <- year(GBU_datq4$rounded_datetime_15min)
+GBU_datq4$yday <- yday(GBU_datq4$rounded_datetime_15min)
+
+
+GBU_datq4 <- GBU_datq4 %>%
   mutate(DO_supersaturated = ifelse(do.obs > DO.sat, TRUE, FALSE))
 
-
-GBU_datq %>%
+GBU_datq4 %>%
   ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated))) +
   geom_point(alpha=0.1) + theme_bw() + 
   theme(legend.position = "right") + 
   facet_grid(year~.)
 
-GBL_datq %>%
-  filter(dischargeCMS<9)%>%
-  ggplot(aes(x = dischargeCMS, y = DO.sat, color=as.factor(DO_supersaturated), 
-             shape=as.factor(discharge_T50_flag))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right") +  facet_grid(year~.)
 
+summary(GBU_datq4)
 
-share_sat <- GBL_datq %>%
-  #filter(maintenance_flag<1 & fouling_flag <1)%>%
-  ggplot(aes(x = yday, y = DO.sat, color=as.factor(DO_supersaturated), 
-             shape=as.factor(discharge_T50_flag))) +
-  geom_point(alpha=0.1) + theme_bw() + 
-  theme(legend.position = "right") +  facet_grid(year~.)
-
-# saveRDS(GBU_datq, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/24_GBU_DO_flag_sat_v2.rds")
-
+# saveRDS(GBU_datq4, "R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/saturation/25_GBU_DO_flag_sat.rds")
 
