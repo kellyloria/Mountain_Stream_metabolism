@@ -1,0 +1,551 @@
+# single stage
+# 2024-03-12
+
+## ---------------------------
+rm(list=ls())
+
+# Load packages
+library(StreamMetabolism)
+library(streamMetabolizer)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lme4)
+library(rstan)
+library(unitted)
+library(zoo)
+library(lubridate)
+library(dataRetrieval)
+library(scales)
+library(StanHeaders)
+
+set.seed(2021)
+
+#  install.packages("remotes")
+#  remotes::install_github("appling/unitted")
+
+#remotes::install_github("USGS-R/streamMetabolizer", force = TRUE)
+
+## ---------------------------
+## Read in DO data from miniDOT deployments 03/25-10/01
+##
+# PC path  setwd("R:/Users/kloria/Documents/2023_StreamMetab")
+
+#"R:\Users\kloria\Documents\Stream_Metab_24\Core_sites\offset_DO_dat\saturation\24_GBU_DO_flag_sat.rds"
+
+site <- "GBU"
+dat <- readRDS("R:/Users/kloria/Documents/Stream_Metab_24/Core_sites/offset_DO_dat/light/25_GBU_DO_flag_sat_light.rds")
+
+dat <- dat %>%
+  filter(maintenance_flag<1 & fouling_flag<1 & do.obs > 3.75)
+summary(dat)
+names(dat)
+
+dat <- dat %>%
+  filter(
+    !(
+      (solar.time > as.POSIXct("2022-04-07 10:00:00") & solar.time < as.POSIXct("2022-04-07 11:45:00")) |
+        (solar.time > as.POSIXct("2022-11-04 07:00:00") & solar.time < as.POSIXct("2022-11-04 12:00:00")) |
+        (solar.time > as.POSIXct("2023-03-27 00:00:00") & solar.time < as.POSIXct("2023-03-27 12:00:00"))
+    )
+  )
+
+
+library(tidyselect)
+library(dplyr)
+## Compile Data
+metab_inputs('bayes', 'data')
+dat <- dat%>%
+  dplyr::select(solar.time, do.obs, DO.sat, depth, wtr, light_in, dischargeCMS) %>%
+  dplyr::rename(DO.obs=do.obs, temp.water="wtr", light="light_in" ,discharge="dischargeCMS")
+
+
+## Check for NAs in time series
+which(is.na(dat$solar.time)) 
+dat<- na.omit((dat)) 
+
+## mle model needs: solar.time, DO.obs, DO.sat, depth, temp.water, light
+names(dat)
+dat <- dat[,c("solar.time","DO.obs","DO.sat","depth","temp.water","light","discharge")]
+
+
+# Check for duplicated timestamps
+if (any(duplicated(dat$solar.time))) {
+  cat("Duplicates detected. Removing duplicates...\n")
+  # Remove duplicates
+  dat <- dat[!duplicated(dat$solar.time), ]
+} else {
+  cat("No duplicates detected.\n")
+}
+
+# Verify that duplicates are removed
+any(duplicated(dat$solar.time))
+
+
+# 
+HighQ_test <- subset(dat, solar.time > "2023-05-10 00:00:00" & solar.time < "2023-06-18 20:00:00")
+
+lowQ_test <- subset(dat, solar.time > "2023-09-15 00:00:00" & solar.time < "2023-10-05 20:00:00")
+
+
+lowQ2_test <- subset(dat, solar.time > "2022-03-18 00:00:00" & solar.time < "2022-10-28 20:00:00")
+
+Summer_test <- subset(dat, solar.time > "2021-07-05 00:00:00" & solar.time < "2021-07-09 00:00:00")
+
+
+# Check timestamp format with light or temp
+qplot(solar.time,  temp.water, data = lowQ2_test, geom="point") +
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))+
+  scale_x_datetime(labels = date_format("%m/%d %H:%M"),
+                   breaks = date_breaks("320 hours"))
+
+
+# dat<- Summer_test
+
+
+
+# Remove flows that violate model assumptions
+dat_cleaned <- dat %>%
+  dplyr::mutate(date = as.Date(solar.time)) %>%
+  dplyr::group_by(date) %>%
+  # Calculate the daily average discharge
+  dplyr:: mutate(daily_avg_discharge = mean(discharge, na.rm = TRUE)) %>%
+  # Identify days where any discharge is double the daily average
+  dplyr::mutate(flag_double_discharge = any(discharge > 2.05 * daily_avg_discharge)) %>%
+  # Ungroup to remove grouping
+  dplyr:: ungroup() %>%
+  # Filter out flagged days
+  dplyr:: filter(!flag_double_discharge) %>%
+  # Remove intermediate columns
+  dplyr:: select(-daily_avg_discharge, -flag_double_discharge)
+
+#####################################################
+#Visualize the data    
+#####################################################
+# dat <- dat_cleaned
+
+dat %>% unitted::v() %>%
+  mutate(DO.pctsat = 100 * (DO.obs / DO.sat)) %>%
+  dplyr::select(solar.time, starts_with('DO')) %>%
+  gather(type, DO.value, starts_with('DO')) %>%
+  mutate(units=ifelse(type == 'DO.pctsat', 'DO\n(% sat)', 'DO\n(mg/L)')) %>%
+  ggplot(aes(x=solar.time, y=DO.value, color=type)) + geom_line() + 
+  facet_grid(units ~ ., scale='free_y') + theme_GB() +
+  scale_color_discrete('variable')
+
+labels <- c(depth='depth\n(m)', temp.water='water temp\n(deg C)', light='PAR\n(umol m^-2 s^-1)', discharge='Q\n(cms)')
+dat %>% unitted::v() %>%
+  dplyr::select(solar.time, depth, temp.water, light, discharge) %>%
+  gather(type, value, depth, temp.water, light, discharge) %>%
+  mutate(
+    type=ordered(type, levels=c('depth','temp.water','light','discharge')),
+    units=ordered(labels[type], unname(labels))) %>%
+  ggplot(aes(x=solar.time, y=value, color=type)) + geom_line() + 
+  facet_grid(units ~ ., scale='free_y') + theme_GB() +
+  scale_color_discrete('variable')
+
+
+# 
+# ### Only use even obs per day
+# ## Try to get even data:
+# dat2 <- dat %>%
+#   mutate(date_only = as.Date(solar.time)) %>%
+#   group_by(date_only) %>%
+#   filter(n() == 96) %>%  # Assuming 96 observations per day for 15-minute intervals
+#   dplyr::select(-date_only)
+# 
+# dat2<- as.data.frame(dat2)
+# 
+dat <- dat %>%
+  dplyr::select(solar.time, DO.obs, DO.sat, depth, temp.water, light, discharge)
+
+
+dat3<- dat
+##====================================================
+## Model the data 
+##====================================================
+
+## Set bayes specs
+bayes_name_new <- mm_name(type = 'bayes', pool_K600 = "binned",
+                          err_obs_iid = TRUE, err_proc_iid = TRUE,
+                          ode_method = "trapezoid", deficit_src = 'DO_mod', engine = 'stan')
+bayes_specs_new <- specs(bayes_name_new)
+
+# Compute log-transformed discharge for setting K600 priors
+logQ <- log(na.omit(dat$discharge))
+Q_var <- round(sd(na.omit(logQ)),2)
+
+## K600 to Q
+k600 = c((147.03*(dat$discharge)) + 0.8307)
+hist(log(k600))
+summary(log(k600))
+
+# Inspect log(Q) range to define node centers
+# logQ_range <- summary(logQ)
+logQ_range <- round(range(logQ, na.rm = TRUE),2)
+hist(logQ, breaks = 20, main = "Histogram of log(Q)")
+
+######################
+# flow q relationship? 
+# Adjust priors for K600
+bayes_specs_new$K600_lnQ_nodes_centers <- seq(c(logQ_range[1]+0.75), c(logQ_range[2]-0.75), length.out = 6)
+bayes_specs_new$K600_lnQ_nodes_meanlog <- c(4.86, # median
+                                            4.35, # measured
+                                            3.65, # measured
+                                            3.08, # measured
+                                            2.99, # 1 quartile
+                                            0.90) # 1 min
+
+# 3.2719, 3.2715, 2.7847
+bayes_specs_new$K600_lnQ_nodes_sdlog <- rep(Q_var, 6) # Adjust as Q_var
+bayes_specs_new$K600_daily_sigma_sigma <- 0.05
+
+bayes_specs_new$n_chains <- c(3)
+bayes_specs_new$n_cores <- c(3)
+bayes_specs_new$burnin_steps <- c(2500)
+bayes_specs_new$saved_steps <- c(2500)
+
+bayes_specs_new$stan_control <- list(adapt_delta = 0.98, max_treedepth = 18)
+
+##==============
+# Run the model
+##==============
+dat_metab_GB <- metab(bayes_specs_new, data = dat)
+
+# extract fit:
+dat_fit_GB <- get_fit(dat_metab_GB)
+
+
+## Visualize
+DOplot <-plot_DO_preds(predict_DO(dat_metab_GB))
+
+metabplot<- plot_metab_preds(predict_metab(dat_metab_GB))
+
+
+## Check binning
+Binning <- function(fit_Site, Site){
+  SM_output <- fit_Site$daily
+  SM_day <- get_data_daily(Site)
+  SM_KQbin <- fit_Site$KQ_binned
+  SM_specs <- get_specs(Site)
+  
+  day <- data.frame(SM_day$discharge.daily, SM_output$K600_daily_50pct, rep('daily', dim(SM_output)[1]))
+  colnames(day)<-c('Q', 'K600', 'Group')
+  
+  nodes<-data.frame(exp(as.numeric(as.character(SM_specs$K600_lnQ_nodes_centers))), exp(SM_KQbin$lnK600_lnQ_nodes_50pct), rep('node', dim(SM_KQbin)[1]))
+  colnames(nodes)<-c('Q', 'K600', 'Group')
+  KQ_plot<-rbind(day,nodes)
+  
+  ggplot(data=KQ_plot, aes(x=log(Q), y=K600, group=Group, colour=Group)) + 
+    geom_point(size=3) +
+    #geom_line() + 
+    scale_color_manual(name="K-Q",
+                       breaks = c("daily", "node"),
+                       values=c("grey", "purple"),
+                       labels=c("Daily","Bin")) +
+    ylab("K600") +
+    xlab("logQ") +
+    theme_bw() +
+    theme(legend.position = "top")
+}
+
+binplot<- Binning(dat_fit_GB, dat_metab_GB)
+binplot
+
+get_fit(dat_metab_GB)$overall %>%
+  dplyr::select(ends_with('Rhat'))
+
+### Save info
+# Specify site name
+site <- "GBU"
+rundate <- Sys.Date()
+label <- "flagged_flow_excluded"
+
+
+## PAUSE ! check out path 
+output_path <- "R:/Users/kloria/Documents/Stream_Metab_24/model_output/GBU"
+if (!dir.exists(output_path)) dir.create(output_path)
+
+# Save metabolic model fit and data as .rda
+save_path <- file.path(output_path, paste0(site, "_", label, "_", rundate, "_metab_fit.rda"))
+save(dat_fit_GB, dat_metab_GB, file = save_path)
+
+# Optionally confirm saved
+cat("Metabolic fit saved as:", save_path, "\n")
+
+
+# Create the folder if it doesn't exist
+if (!dir.exists(output_path)) dir.create(output_path)
+
+# Save individual CSVs
+writefiles <- function(data, data2, path) {
+  for (i in seq_along(data)) {
+    filename <- paste0(path, site, "_", label, "_", rundate, "_", names(data)[i], ".csv")
+    write.csv(data[[i]], filename, row.names = FALSE)
+  }
+  
+  write.csv(unlist(get_specs(data2)), paste0(path, site, "_", label, "_", rundate, "_", "specs.csv"), row.names = FALSE)
+  write.csv(get_data_daily(data2), paste0(path, site, "_", label, "_", rundate, "_", "datadaily.csv"), row.names = FALSE)
+  write.csv(get_data(data2), paste0(path, site, "_", label, "_", rundate, "_", "mod_and_obs_DO.csv"), row.names = FALSE)
+}
+
+# Run the function
+writefiles(dat_fit_GB, dat_metab_GB, path = output_path)
+
+
+### save plots 
+ggsave(plot = DOplot, filename = paste0(output_path, "DO_plot_",site, "_", label, "_", rundate,".png"),width=9,height=6,dpi=300)
+
+ggsave(plot = metabplot, filename = paste0(output_path, "metab_plot_",site, "_", label, "_", rundate,".png"),width=9,height=5,dpi=300)
+
+ggsave(plot = binplot, filename = paste0(output_path, "binplot_",site, "_", label, "_", rundate,".png"),width=5,height=4,dpi=300)
+
+
+###################
+library(tidyverse)
+library(lubridate)
+library(dataRetrieval)
+library(viridis)
+library(cowplot)
+library(zoo)
+library(readxl)
+library(ggpubr)
+##################
+mod.fits <- read.csv(paste0(site, "_", label, "_", rundate, "_", "mod_and_obs_DO.csv")) %>%
+  mutate(week = week(solar.time))%>%
+  mutate(jday = yday(solar.time)) %>%
+  mutate(
+    DO_pr_sat = c((DO.obs/DO.sat) * 100), 
+    DO_pr_sat_mod = c((DO.mod/DO.sat) * 100))
+
+fits <- mod.fits%>% 
+  group_by(date)%>%
+  summarize(  rmse = sqrt(mean((DO.mod-DO.obs)^2)),
+              sd = sd(DO.obs),
+              min = min(DO.obs, na.rm = T),
+              max = max(DO.obs, na.rm = T),
+              range = range(max-min, na.rm = T),
+              nrmse = rmse/range) %>%
+  mutate(flag = case_when(rmse > range/10 ~ "High-RMSE", TRUE ~ "OK"))
+
+rmsehist <- ggplot(fits, aes(rmse))+
+  geom_histogram()
+
+## this plots where rmse > 10% of range of data:
+highrmse <- mod.fits %>% left_join(fits, by = "date")%>%
+  mutate(mon = month(date))%>%
+  filter(mon %in% c(7:11))%>%
+  filter(flag =="High-RMSE")%>%
+  ggplot(aes(y = DO.obs, x= solar.time))+
+  geom_point(col = "cyan4", alpha = .7, size = 1.3)+
+  geom_line(aes(y = DO.mod, x = solar.time), col = "grey20")+
+  facet_wrap(~date, scales = "free", ncol = 5)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+###############3
+#######
+
+# 
+ggsave(plot = DOplot, filename = paste("R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/Full_figure/DO_preds_GBU_bayesmodel_measuredK600_no_filter.png",sep=""),width=10,height=4,dpi=300)
+
+metabplot<- plot_metab_preds(predict_metab(dat_metab_GB))
+# 
+ggsave(plot = metabplot, filename = paste("R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/Full_figure/metabplot_GBU_bayesmodel_measuredK600_no_filter.png",sep=""),width=10,height=4,dpi=300)
+
+
+## Check binning
+Binning <- function(fit_Site, Site){
+  SM_output <- fit_Site$daily
+  SM_day <- get_data_daily(Site)
+  SM_KQbin <- fit_Site$KQ_binned
+  SM_specs <- get_specs(Site)
+  
+  day <- data.frame(SM_day$discharge.daily, SM_output$K600_daily_50pct, rep('daily', dim(SM_output)[1]))
+  colnames(day)<-c('Q', 'K600', 'Group')
+  
+  nodes<-data.frame(exp(as.numeric(as.character(SM_specs$K600_lnQ_nodes_centers))), exp(SM_KQbin$lnK600_lnQ_nodes_50pct), rep('node', dim(SM_KQbin)[1]))
+  colnames(nodes)<-c('Q', 'K600', 'Group')
+  KQ_plot<-rbind(day,nodes)
+  
+  ggplot(data=KQ_plot, aes(x=log(Q), y=K600, group=Group, colour=Group)) + 
+    geom_point(size=3) +
+    #geom_line() + 
+    scale_color_manual(name="K-Q",
+                       breaks = c("daily", "node"),
+                       values=c("grey", "purple"),
+                       labels=c("Daily","Bin")) +
+    ylab("K600") +
+    xlab("logQ") +
+    theme_GB() +
+    theme(legend.position = "top")
+}
+
+binplot<- Binning(dat_fit_GB, dat_metab_GB)
+
+ggsave(plot = binplot, filename = paste("R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/Full_figure/binplot_GBU_bayesmodel_measuredK600_no_filter.png",sep=""),width=5,height=4,dpi=300)
+
+# ggsave(plot = binplot, filename = paste("R:/Users/kloria/Documents/2023_StreamMetab/figures/binplot_GBU_bayesmodel_GBU2.png",sep=""),width=5,height=4,dpi=300)
+
+
+get_fit(dat_metab_GB)$overall %>%
+  dplyr::select(ends_with('Rhat')) # might be best rhat 
+
+## optional save details
+site <- "GBU"
+rundate <- format(Sys.Date(), "%y%m%d")
+runmeta_k600 <- "K600_measured_prior_noGPP_prior_no_filter"
+runmeta_light <- "NLDAS"
+
+
+## Save info:
+writefiles <- function(data, data2, path = "R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/") {
+  for (i in seq_along(data)) {
+    filename = paste(path,site,"_",runmeta_k600,"_",runmeta_light,"_",names(data)[i],rundate,".csv", sep = "")
+    write.csv(data[[i]], filename)
+  }
+  
+  write.csv(unlist(get_specs(data2)), paste(path,site,"_",runmeta_k600,"_",runmeta_light,"_",rundate,"specs.csv", sep = ""))
+  write.csv(get_data_daily(data2), paste(path,site,"_",runmeta_k600,"_",runmeta_light,"_",rundate,"datadaily.csv", sep = ""))
+  write.csv(get_data(data2), paste(path,site,"_",runmeta_k600,"_",runmeta_light,"_","mod_and_obs.csv", sep = ""))
+}
+
+## Create new folder for site and write csv info
+writefiles(dat_fit_GB, dat_metab_GB)
+
+
+getwd()
+
+
+# saveRDS(dat_metab_GB, file = "R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/Full_out/GBU_Summer_K600_measured_prior_241208.rds")
+
+
+
+###
+###
+
+# plot for k600
+# R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/GBU_HighFlow_test_pool_K600_binned_NLDAS_241204datadaily.csv
+GBU <- read.csv("R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/GBU_K600_measured_prior_noGPP_prior_no_filter_NLDAS_daily241213.csv")
+
+GBU$date <- as.Date(GBU$date, origin="2021-01-01")
+GBU$site <- "GBU"
+GBU$shore <- "west"
+
+Odd_plot <- ggplot(GBU, aes(x = K600_daily_mean, color = shore, fill = shore)) +
+  geom_histogram(aes(y = ..density..), position = "identity", alpha = 0.5, bins = 15) +
+  scale_fill_manual(values = alpha(c("#3283a8"), 0.2)) +
+  labs(subtitle = "K600 measured") +
+  scale_color_manual(values = alpha(c("#3283a8"), 0.9)) + theme_GB() + 
+  geom_vline(data = GBU, aes(xintercept = mean(na.omit(K600_daily_mean))), linetype = "dashed") 
+
+Gplot_sp <- ggplot(GBU, aes(x = K600_daily_mean, y = (ER_mean*-1))) +  
+  geom_point(shape= 17, col = alpha(c("#3283a8"),0.75)) +
+  geom_smooth(method ="lm", se=F)+  facet_grid(.~site)+
+  theme_GB()
+
+
+GB_lm <- lm(K600_daily_mean~(ER_mean*-1), data=GBU)
+summary(GB_lm)
+
+# Extract R-squared value
+r_gsquared <- summary(GB_lm)$r.squared
+GB_plot <- Gplot_sp + 
+  geom_text(aes(x = mean((GBU$K600_daily_mean), na.rm=T), y = max((GBU$ER_mean*-1), na.rm=T), 
+                label = paste("R2=", round(r_gsquared, 3))),
+            hjust = 1, vjust = 0, size = 3, col = "blue",
+            parse = T, check_overlap = T, na.rm = T)
+
+library(ggpubr)
+
+k_grid <- ggarrange(GB_plot,
+                    Odd_plot,
+                    ncol = 2, nrow = 1,
+                    common.legend = TRUE, 
+                    legend = "bottom",
+                    widths = c(0.55, 0.45))
+
+#
+ggsave(plot = k_grid, filename = paste("R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/Full_out/ER_K600plot_GBU_K600_measured_prior_no_filter_daily241213.png",sep=""),width=6,height=3,dpi=300)
+
+dat3_sum <- dat3%>%
+  mutate(date = as.Date(solar.time))%>%
+  group_by(date)%>%
+  summarise(
+    DO.obs=mean(DO.obs, na.rm=T),
+    DO.sat=mean(DO.sat, na.rm=T), 
+    depth=mean(depth , na.rm=T), 
+    temp.water=mean(temp.water, na.rm=T),
+    discharge=mean(discharge, na.rm=T))
+
+
+str(GBU)
+
+
+GBU2 <- GBU%>%
+  left_join(dat3_sum, by= c("date"))
+
+Gplot_DOsat <- ggplot(GBU2, aes(y = K600_daily_mean, x = DO.sat)) +  
+  labs(subtitle = "2021 summer test K600 measured") +
+  geom_point(shape= 17, col = alpha(c("#3283a8"),0.75)) +
+  #geom_smooth(method ="lm", se=F)+  
+  facet_grid(.~site)+
+  theme_GB()
+
+
+Gplot_temp <- ggplot(GBU2, aes(y = K600_daily_mean, x = temp.water)) +  
+  geom_point(shape= 17, col = alpha(c("#3283a8"),0.75)) +
+  #geom_smooth(method ="lm", se=F)+ 
+  facet_grid(.~site)+
+  theme_GB()
+
+Gplot_Q <- ggplot(GBU2, aes(y = K600_daily_mean, x = discharge)) +  
+  geom_point(shape= 17, col = alpha(c("#3283a8"),0.75)) +
+  #geom_smooth(method ="lm", se=F)+  
+  facet_grid(.~site)+
+  theme_GB()
+
+
+GB_lmq <- lm(K600_daily_mean~discharge, data=GBU2)
+summary(GB_lmq)
+
+# Extract R-squared value
+r_gsquaredq <- summary(GB_lmq)$r.squared
+Gplot_Q2 <- Gplot_Q + 
+  geom_text(aes(y = mean((GBU2$K600_daily_mean), na.rm=T), x = max((GBU2$discharge), na.rm=T), 
+                label = paste("R2=", round(r_gsquaredq, 3))),
+            hjust = 1, vjust = 0, size = 3, col = "blue",
+            parse = T, check_overlap = T, na.rm = T)
+
+Gplot_z <- ggplot(GBU2, aes(y = K600_daily_mean, x = depth)) +  
+  geom_point(shape= 17, col = alpha(c("#3283a8"),0.75)) +
+  #geom_smooth(method ="lm", se=F)+  
+  facet_grid(.~site)+
+  theme_GB()
+
+GB_lmz <- lm(K600_daily_mean~depth, data=GBU2)
+summary(GB_lmz)
+r_gsquaredz <- summary(GB_lmz)$r.squared
+
+Gplot_z2 <- Gplot_z + 
+  geom_text(aes(y = mean((GBU2$K600_daily_mean), na.rm=T), x = max((GBU2$depth), na.rm=T), 
+                label = paste("R2=", round(r_gsquaredz, 3))),
+            hjust = 1, vjust = 0, size = 3, col = "blue",
+            parse = T, check_overlap = T, na.rm = T)
+
+
+
+k_e_grid <- ggarrange(Gplot_DOsat,
+                    Gplot_temp,
+                    Gplot_Q2,
+                    Gplot_z2,
+                    ncol = 1, nrow = 4,
+                    common.legend = TRUE, 
+                    legend = "bottom")
+
+
+ggsave(plot = k_e_grid, filename = paste("R:/Users/kloria/Documents/Stream_Metab_24/24_metabolism_output/Full_out/GBU_K600_conditions_plot_measured_noGPP_prior_no_filter_241213.png",sep=""),width=4,height=12,dpi=300)
+
+
+
